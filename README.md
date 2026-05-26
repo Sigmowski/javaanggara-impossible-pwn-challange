@@ -37,7 +37,7 @@ The Fix: To get around this and make the binary patchable/debuggable, the instru
 The Flaw: Breaking Logic via Integer Overflow
 
 While reversing the binary in Ghidra, I spotted a neat logic bug in how the program validates and processes the object index across the main menu loop.
-1. Truncation Issue
+## 1. Truncation Issue
 
 The application reads the user index as a 64-bit value, but when it actually goes to check boundaries and access the internal array, it truncates/casts that value down to a 32-bit integer (int / uint).
 
@@ -47,7 +47,7 @@ C
     if (((uint)local_100 < 8) && (*(long *)(&DAT_00109830 + (local_100 & 0xffffffff) * 8) != 0))
 
 
-2. Bypassing the Bounds
+## 2. Bypassing the Bounds
 
 Since the check uses a 32-bit truncation, we can feed it a massive 64-bit number that wraps around perfectly. If we pass 4294967296 (0x100000000), the application gets confused:
 
@@ -106,7 +106,7 @@ Python
     print(p.recvuntil(b'=== EXP', timeout=1).decode('latin-1', errors='ignore'))
     p.close()
 
-Current Roadblocks & Mitigation Barriers
+## Current Roadblocks & Mitigation Barriers
 
 Even though the UAF is fully operational via BIG_IDX, getting code execution or a clean library leak is heavily blocked by how the environment is built:
 
@@ -114,9 +114,9 @@ Full RELRO: The Global Offset Table (.got) is marked Read-Only after the binary 
 
 Strict Seccomp: The sandbox entirely disables execve and open. Traditional shellcode or simple file reading vectors are dead on arrival.
 
-ASLR & Restrictions: Everything is randomized. Since modern Android security blocks access to /proc/pid/maps, any out-of-bounds math or pointer shifting has to be done blindly, relying purely on relative chunk distances inside Jemalloc.
+## ASLR & Restrictions: Everything is randomized. Since modern Android security blocks access to /proc/pid/maps, any out-of-bounds math or pointer shifting has to be done blindly, relying purely on relative chunk distances inside Jemalloc.
 
-Arbitrary Read Attempt via SIZE_ARRAY
+## Arbitrary Read Attempt via SIZE_ARRAY
 
 An attempt was made to weaponize the BIG_IDX overflow to create an Arbitrary Read primitive by targeting SIZE_ARRAY and PTR_ARRAY in .bss. While the script successfully leaked the ASLR base via the process maps and swapped PTR_ARRAY[0] with base_address, the Show function returned only 33 bytes (the menu text). This confirms that the binary either stops output upon hitting a null byte (\x00) in the ELF header, or enforces strict runtime length boundaries, backing up the author's note: "If you can solve this without a leak, you're the chosen one."
 Final Thoughts
