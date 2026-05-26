@@ -42,7 +42,7 @@ While reversing the binary in Ghidra, I spotted a neat logic bug in how the prog
 The application reads the user index as a 64-bit value, but when it actually goes to check boundaries and access the internal array, it truncates/casts that value down to a 32-bit integer (int / uint).
 
 Here is how that looks in Ghidra's decompiler:
-C
+
 ```c
 
     if (((uint)local_100 < 8) && (*(long *)(&DAT_00109830 + (local_100 & 0xffffffff) * 8) != 0))
@@ -106,7 +106,6 @@ Python
     # Dump output
     print(p.recvuntil(b'=== EXP', timeout=1).decode('latin-1', errors='ignore'))
     p.close()
-...
 ```
 ## Current Roadblocks & Mitigation Barriers
 
