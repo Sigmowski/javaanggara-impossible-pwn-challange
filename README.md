@@ -18,15 +18,30 @@ The binary is packed with pretty much every modern mitigation layer you can thin
 
 ---
 
-## The Flaw: Breaking Logic via Integer Overflow
+## 🛠️ Bypassing Anti-Debugging & Anti-Frida
+
+Before digging into the vulnerability, the binary tries to completely block debuggers, dynamic instrumentation (like Frida), or tracing tools by invoking strict Linux/Android environment protections.
+
+During dynamic and static analysis, I identified the following anti-debug/anti-tamper markers in the disassembly:
+```c
+prctl(0x26, 1, 0, 0, 0);
+syscall(0x115, 1, 0, &local_110);
+
+    prctl(0x26, 1, ...): Maps directly to PR_SET_DUMPABLE set to 0 (SUID_DUMP_DISABLE). It prevents the kernel from producing core dumps and disallows non-root users/debuggers from attaching via ptrace.
+
+    syscall(0x115, 1, ...): 0x115 (277) is the syscall number for sys_ptrace on ARM64. Invoking it with 1 (PTRACE_TRACEME) tells the OS that the process is already being tracked, making subsequent attachment attempts from tools like GDB or Frida fail.
+
+The Fix: To get around this and make the binary patchable/debuggable, the instructions handling these calls were located and hot-patched directly using Ghidra, effectively neutralizing the check.
+The Flaw: Breaking Logic via Integer Overflow
 
 While reversing the binary in Ghidra, I spotted a neat logic bug in how the program validates and processes the object index across the main menu loop.
+1. Truncation Issue
 
-### 1. Truncation Issue
-The application reads the user index as a **64-bit value**, but when it actually goes to check boundaries and access the internal array, it truncates/casts that value down to a **32-bit integer** (`int` / `uint`).
+The application reads the user index as a 64-bit value, but when it actually goes to check boundaries and access the internal array, it truncates/casts that value down to a 32-bit integer (int / uint).
 
-Here is how that look in Ghidra's decompiler:
-```c
+Here is how that looks in Ghidra's decompiler:
+C
+
 if (((uint)local_100 < 8) && (*(long *)(&DAT_00109830 + (local_100 & 0xffffffff) * 8) != 0))
 
 2. Bypassing the Bounds
@@ -97,6 +112,9 @@ Even though the UAF is fully operational via BIG_IDX, getting code execution or 
 
     ASLR & Restrictions: Everything is randomized. Since modern Android security blocks access to /proc/pid/maps, any out-of-bounds math or pointer shifting has to be done blindly, relying purely on relative chunk distances inside Jemalloc.
 
+Arbitrary Read Attempt via SIZE_ARRAY
+
+An attempt was made to weaponize the BIG_IDX overflow to create an Arbitrary Read primitive by targeting SIZE_ARRAY and PTR_ARRAY in .bss. While the script successfully leaked the ASLR base via the process maps and swapped PTR_ARRAY[0] with base_address, the Show function returned only 33 bytes (the menu text). This confirms that the binary either stops output upon hitting a null byte (\x00) in the ELF header, or enforces strict runtime length boundaries, backing up the author's note: "If you can solve this without a leak, you're the chosen one."
 Final Thoughts
 
 This binary shows a great example of how compile-time defenses (Full RELRO, Seccomp, Fortify) can be completely bypassed at a logic level. A simple type mismatch (int64 down to int32) is all it takes to mess with the app's internal state machine and gain control over low-level memory layout.
