@@ -43,9 +43,10 @@ The application reads the user index as a 64-bit value, but when it actually goe
 
 Here is how that looks in Ghidra's decompiler:
 C
+```c
 
     if (((uint)local_100 < 8) && (*(long *)(&DAT_00109830 + (local_100 & 0xffffffff) * 8) != 0))
-
+```
 
 ## 2. Bypassing the Bounds
 
@@ -63,7 +64,7 @@ Proof of Concept (PoC)
 Here is a quick Python script using pwntools to trigger the bug. It populates the Jemalloc tcache, hits the integer overflow via the massive index, and safely modifies the chunk structure without triggering a crash.
 
 Python
-
+```python
     from pwn import *
     import time
 
@@ -105,7 +106,8 @@ Python
     # Dump output
     print(p.recvuntil(b'=== EXP', timeout=1).decode('latin-1', errors='ignore'))
     p.close()
-
+...
+```
 ## Current Roadblocks & Mitigation Barriers
 
 Even though the UAF is fully operational via BIG_IDX, getting code execution or a clean library leak is heavily blocked by how the environment is built:
